@@ -1,4 +1,5 @@
 import { applyPendingMigrations } from "@paperclipai/db";
+import { PUBLIC_MCP_SCOPES } from "@paperclipai/shared";
 import { resolveExternalTestDatabaseUrl } from "./helpers/external-test-database.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -54,6 +55,25 @@ describe("public MCP configuration", () => {
     expect(publicMcpConfig({}, "https://paperclip.example")?.origin).toBe("https://paperclip.example");
     expect(publicMcpConfig({ PAPERCLIP_PUBLIC_MCP_ENABLED: "true" })).toBeNull();
     expect(publicMcpCapabilities.map((c) => c.name)).not.toEqual(expect.arrayContaining(["run_tool", "call_api"]));
+  });
+
+  it("advertises offline_access wherever clients learn which scopes to request", async () => {
+    const stub = {
+      config,
+      assertEnabled: async () => {},
+      authenticate: async () => { throw new Error("invalid token"); },
+    } as unknown as ReturnType<typeof createPublicMcpOAuth>;
+    const app = express();
+    app.use(publicMcpIngressRoutes(stub, vi.fn()));
+    const resource = await request(app).get("/.well-known/oauth-protected-resource/mcp/paperclip");
+    expect(resource.status).toBe(200);
+    expect(resource.body.scopes_supported).toEqual([...PUBLIC_MCP_SCOPES]);
+    expect(resource.body.scopes_supported).toContain("offline_access");
+    const authorizationServer = await request(app).get("/.well-known/oauth-authorization-server");
+    expect(authorizationServer.body.scopes_supported).toEqual(resource.body.scopes_supported);
+    const unauthorized = await request(app).post("/mcp/paperclip").send({});
+    expect(unauthorized.status).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain(`scope="${PUBLIC_MCP_SCOPES.join(" ")}"`);
   });
 });
 
