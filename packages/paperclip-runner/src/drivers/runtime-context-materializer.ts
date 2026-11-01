@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
-  cp,
   lstat,
   mkdir,
   open,
   readdir,
+  readFile,
   rename,
   rm,
   writeFile,
@@ -44,6 +44,36 @@ async function assertSafeTree(root: string, child = ""): Promise<void> {
         `runtime context asset contains an unsupported file: ${childRelative}`,
       );
     }
+  }
+}
+
+/**
+ * Copies a verified, symlink-free asset tree into a fresh staging directory.
+ *
+ * Do not use `fs.cp` here. Published asset bundles are sealed read-only
+ * (files 0444, directories 0555). `fs.cp` recreates each copy with the source
+ * mode and then calls `chmod` on the new file, and that `chmod` fails with
+ * EACCES on bind-mounted host folders (Docker Desktop file sharing) even
+ * though the process owns the file. Create every copy owner-writable instead;
+ * `protectStagedTree` seals the staged tree afterwards through file handles.
+ */
+async function copyAssetTree(source: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: true, mode: 0o700 });
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyAssetTree(from, to);
+      continue;
+    }
+    if (!entry.isFile()) {
+      throw new Error("runtime context asset contains an unsupported file");
+    }
+    const sourceMode = (await lstat(from)).mode & 0o777;
+    await writeFile(to, await readFile(from), {
+      flag: "wx",
+      mode: sourceMode | 0o200,
+    });
   }
 }
 
@@ -264,13 +294,7 @@ export async function materializeNativeRuntimeSkills(
   try {
     for (const skill of context?.skills ?? []) {
       const target = safeMaterializationTarget(stagingHome, skill.runtimeName);
-      await cp(skill.bundle.rootPath, target, {
-        recursive: true,
-        force: false,
-        errorOnExist: true,
-        dereference: false,
-        verbatimSymlinks: true,
-      });
+      await copyAssetTree(skill.bundle.rootPath, target);
       await assertSafeTree(target);
       await protectStagedTree(target);
     }
