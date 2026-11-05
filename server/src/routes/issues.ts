@@ -9956,7 +9956,7 @@ export function issueRoutes(
           (activeRecoveryAction.kind === "deliberate_wait_without_target" || workspaceBaseRef || workspaceRetry)
         ) {
           if (
-            lockedIssue.status !== "blocked" ||
+            (lockedIssue.status !== "blocked" && lockedIssue.status !== "in_progress") ||
             activeRecoveryAction.ownerType !== "board" ||
             (!workspaceBaseRef && !workspaceRetry && activeRecoveryAction.wakePolicy?.type !== "board_escalation") ||
             !activeRecoveryAction.returnOwnerAgentId ||

@@ -2661,7 +2661,7 @@ describe("agent issue mutation checkout ownership", () => {
         wakePolicy: { type: "board_escalation" },
       });
     }
-    it.each(["done", "cancelled", "backlog", "todo", "in_progress"])("rejects a stale retry of a %s task", async status => {
+    it.each(["done", "cancelled", "backlog", "todo"])("rejects a stale retry of a %s task", async status => {
       seedRetry(); mockIssueService.getById.mockResolvedValue(makeIssue({ status, assigneeAgentId: ownerAgentId }));
       const res = await request(await createApp(boardActor())).post(`/api/issues/${issueId}/recovery-actions/resolve`)
         .send({ actionId: recoveryActionId, outcome: "restored", sourceIssueStatus: "todo" });
@@ -2670,6 +2670,22 @@ describe("agent issue mutation checkout ownership", () => {
       expect(mockIssueService.update).not.toHaveBeenCalled();
       expect(mockIssueRecoveryActionService.resolveActiveForIssue).not.toHaveBeenCalled();
       expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    });
+    it("hands an in-progress deliberate wait back to its recorded owner", async () => {
+      seedRetry();
+      mockIssueService.getById.mockResolvedValue(makeIssue({ status: "in_progress", assigneeAgentId: ownerAgentId }));
+      const resolutionNote = "Resume the monitor with the recorded results.";
+      const res = await request(await createApp(boardActor())).post(`/api/issues/${issueId}/recovery-actions/resolve`)
+        .send({ actionId: recoveryActionId, outcome: "restored", sourceIssueStatus: "todo", resolutionNote });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(mockIssueService.update).toHaveBeenCalledWith(issueId, expect.objectContaining({ status: "todo" }), expect.anything(), expect.anything());
+      expect(mockIssueRecoveryActionService.resolveActiveForIssue).toHaveBeenCalledWith(expect.objectContaining({
+        actionId: recoveryActionId,
+        outcome: "handed_back",
+        resolutionNote,
+      }), expect.anything());
+      expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(ownerAgentId, expect.anything());
     });
     it.each(["owner", "budget", "approval", "pause", "run", "blocker", "pausedAgent", "terminatedAgent"])("keeps the %s gate authoritative for a board retry", async gate => {
       seedRetry();
